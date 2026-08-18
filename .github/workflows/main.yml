@@ -34,6 +34,50 @@ jobs:
             file \
             python3
 
+      - name: Patch MDK4 for modern libpcap
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("src/osdep/file.c")
+
+          if not p.exists():
+              raise SystemExit("ERROR: src/osdep/file.c not found")
+
+          s = p.read_text()
+
+          if "TCPDUMP_MAGIC" not in s:
+              raise SystemExit(
+                  "ERROR: TCPDUMP_MAGIC was not found in src/osdep/file.c"
+              )
+
+          if "#define TCPDUMP_MAGIC" not in s:
+              marker = "#include <pcap.h>"
+
+              if marker in s:
+                  s = s.replace(
+                      marker,
+                      marker + "\n\n"
+                      "#ifndef TCPDUMP_MAGIC\n"
+                      "#define TCPDUMP_MAGIC 0xa1b2c3d4\n"
+                      "#endif",
+                      1
+                  )
+              else:
+                  s = (
+                      "#ifndef TCPDUMP_MAGIC\n"
+                      "#define TCPDUMP_MAGIC 0xa1b2c3d4\n"
+                      "#endif\n\n"
+                      + s
+                  )
+
+              p.write_text(s)
+
+          print("===== Patched src/osdep/file.c =====")
+          print(p.read_text())
+          print("====================================")
+
       - name: Download OpenWrt SDK
         working-directory: ${{ runner.temp }}
         run: |
@@ -53,19 +97,20 @@ jobs:
           ./scripts/feeds install libnl-genl
           ./scripts/feeds install libpcap
 
-      - name: Create MDK4 OpenWrt package
+      - name: Create temporary MDK4 OpenWrt package
         env:
           WORKSPACE: ${{ github.workspace }}
           SDK_DIR: ${{ runner.temp }}/${{ env.SDK }}
         run: |
           python3 - <<'PY'
           import os
+          import shutil
           from pathlib import Path
 
           workspace = Path(os.environ["WORKSPACE"])
           sdk = Path(os.environ["SDK_DIR"])
-          package = sdk / "package" / "mdk4"
 
+          package = sdk / "package" / "mdk4"
           package.mkdir(parents=True, exist_ok=True)
 
           makefile = """include $(TOPDIR)/rules.mk
@@ -117,11 +162,10 @@ jobs:
           $(eval $(call BuildPackage,mdk4))
           """
 
-          # Remove indentation introduced by the Python source.
+          # Remove the indentation caused by the Python source block.
           lines = makefile.splitlines()
-
-          # Find common indentation, preserving TABs on command lines.
           cleaned = []
+
           for line in lines:
               if line.startswith("          "):
                   line = line[10:]
@@ -132,42 +176,47 @@ jobs:
               encoding="utf-8"
           )
 
-          # Copy the complete MDK4 repository into the package source tree.
+          # Copy MDK4 source into temporary OpenWrt package.
           source = package / "src"
           source.mkdir(parents=True, exist_ok=True)
 
           for item in workspace.iterdir():
-              if item.name == ".git":
-                  continue
-              if item.name == ".github":
-                  continue
-              if item.name == "package":
+
+              if item.name in {
+                  ".git",
+                  ".github",
+                  "package"
+              }:
                   continue
 
               destination = source / item.name
 
               if item.is_dir():
-                  import shutil
-                  shutil.copytree(item, destination, dirs_exist_ok=True)
+                  shutil.copytree(
+                      item,
+                      destination,
+                      dirs_exist_ok=True
+                  )
               else:
-                  import shutil
-                  shutil.copy2(item, destination)
+                  shutil.copy2(
+                      item,
+                      destination
+                  )
 
-          print("Created:")
-          print(package / "Makefile")
-          print(source)
+          print("Temporary OpenWrt package created:")
+          print(package)
 
       - name: Verify generated OpenWrt Makefile
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
-          echo "===== Makefile ====="
+          echo "===== OpenWrt Makefile ====="
           cat -n package/mdk4/Makefile
-          echo "===================="
+          echo "============================"
 
           echo
-          echo "===== TAB check ====="
+          echo "===== TAB characters ====="
           grep -n $'\t' package/mdk4/Makefile || true
-          echo "===================="
+          echo "=========================="
 
       - name: Configure OpenWrt SDK
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
@@ -182,12 +231,22 @@ jobs:
       - name: Find generated IPK
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
-          find bin/packages -type f -name 'mdk4*.ipk' -print
+          echo "===== Generated packages ====="
+
+          find bin/packages \
+            -type f \
+            -name 'mdk4*.ipk' \
+            -print
+
+          echo "=============================="
 
       - name: Verify package
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
-          IPK=$(find bin/packages -type f -name 'mdk4*.ipk' | head -n1)
+          IPK=$(find bin/packages \
+            -type f \
+            -name 'mdk4*.ipk' \
+            | head -n1)
 
           if [ -z "$IPK" ]; then
             echo "ERROR: No MDK4 IPK was generated"
@@ -198,10 +257,10 @@ jobs:
           echo "$IPK"
 
           echo
-          echo "Package file:"
+          echo "Package architecture:"
           file "$IPK"
 
-      - name: Upload IPK
+      - name: Upload MDK4 IPK
         uses: actions/upload-artifact@v4
         with:
           name: mdk4-openwrt-mt7621
