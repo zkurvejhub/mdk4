@@ -60,10 +60,9 @@ jobs:
           from pathlib import Path
 
           # ---------------------------------------------------------
-          # Fix byteorder.h.
-          #
-          # OpenWrt/musl already provides the endian conversion
-          # macros. Do not redefine them.
+          # byteorder.h
+          # Use endian definitions supplied by OpenWrt/musl and
+          # provide compatibility aliases required by MDK4.
           # ---------------------------------------------------------
 
           p = Path("src/osdep/byteorder.h")
@@ -71,7 +70,8 @@ jobs:
           if not p.exists():
               raise SystemExit("ERROR: src/osdep/byteorder.h not found")
 
-          byteorder = r'''#ifndef MDK4_BYTEORDER_H
+          byteorder = r'''
+          #ifndef MDK4_BYTEORDER_H
           #define MDK4_BYTEORDER_H
 
           #include <stdint.h>
@@ -142,15 +142,18 @@ jobs:
           #define be64_to_cpu(x) betoh64(x)
           #endif
 
+          #ifndef __be32_to_cpu
+          #define __be32_to_cpu(x) be32_to_cpu(x)
+          #endif
+
+          #ifndef __be64_to_cpu
+          #define __be64_to_cpu(x) be64_to_cpu(x)
+          #endif
+
           #endif
           '''
 
-          byteorder = "\n".join(
-              line[10:] if line.startswith("          ") else line
-              for line in byteorder.splitlines()
-          ) + "\n"
-
-          p.write_text(byteorder)
+          p.write_text(byteorder.strip() + "\n", encoding="utf-8")
 
           # ---------------------------------------------------------
           # file.c compatibility with modern libpcap.
@@ -161,7 +164,7 @@ jobs:
           if not p.exists():
               raise SystemExit("ERROR: src/osdep/file.c not found")
 
-          s = p.read_text()
+          s = p.read_text(encoding="utf-8")
 
           patch = r'''
           #ifndef TCPDUMP_MAGIC
@@ -189,15 +192,10 @@ jobs:
           #endif
           '''
 
-          patch = "\n".join(
-              line[10:] if line.startswith("          ") else line
-              for line in patch.splitlines()
-          ) + "\n"
-
           if "#define LINKTYPE_ETHERNET" not in s:
-              s = patch + s
+              s = patch.strip() + "\n\n" + s
 
-          p.write_text(s)
+          p.write_text(s, encoding="utf-8")
 
           # ---------------------------------------------------------
           # osdep.c needs unistd.h for usleep().
@@ -208,11 +206,38 @@ jobs:
           if not p.exists():
               raise SystemExit("ERROR: src/osdep.c not found")
 
-          s = p.read_text()
+          s = p.read_text(encoding="utf-8")
 
           if "#include <unistd.h>" not in s:
               s = "#include <unistd.h>\n" + s
-              p.write_text(s)
+
+          p.write_text(s, encoding="utf-8")
+
+          # ---------------------------------------------------------
+          # network.c compatibility.
+          #
+          # MDK4 contains a typo here:
+          #
+          #   << 32 || buf[1]
+          #
+          # which must be bitwise OR:
+          #
+          #   << 32 | buf[1]
+          # ---------------------------------------------------------
+
+          p = Path("src/osdep/network.c")
+
+          if not p.exists():
+              raise SystemExit("ERROR: src/osdep/network.c not found")
+
+          s = p.read_text(encoding="utf-8")
+
+          s = s.replace(
+              "((uint64_t)buf[0] << 32 || buf[1])",
+              "((uint64_t)buf[0] << 32 | buf[1])"
+          )
+
+          p.write_text(s, encoding="utf-8")
 
           print("MDK4 OpenWrt/musl compatibility patches applied.")
           PY
@@ -233,7 +258,8 @@ jobs:
           package = sdk / "package" / "mdk4"
           package.mkdir(parents=True, exist_ok=True)
 
-          makefile = r'''include $(TOPDIR)/rules.mk
+          makefile = r'''
+          include $(TOPDIR)/rules.mk
 
           PKG_NAME:=mdk4
           PKG_VERSION:=4.2
@@ -256,12 +282,15 @@ jobs:
           endef
 
           define Package/mdk4/description
-           MDK4 is a WiFi testing tool from the Aircrack-ng project.
+            MDK4 is a WiFi testing tool from the Aircrack-ng project.
           endef
 
           define Build/Prepare
           	mkdir -p $(PKG_BUILD_DIR)
           	cp -a $(CURDIR)/src/. $(PKG_BUILD_DIR)/
+          endef
+
+          define Build/Configure
           endef
 
           define Build/Compile
@@ -282,13 +311,8 @@ jobs:
           $(eval $(call BuildPackage,mdk4))
           '''
 
-          makefile = "\n".join(
-              line[10:] if line.startswith("          ") else line
-              for line in makefile.splitlines()
-          ) + "\n"
-
           (package / "Makefile").write_text(
-              makefile,
+              makefile.strip() + "\n",
               encoding="utf-8"
           )
 
@@ -317,7 +341,6 @@ jobs:
                   shutil.copy2(item, destination)
 
           print("Temporary OpenWrt package created.")
-          PY
 
       - name: Verify patched sources
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
@@ -327,11 +350,17 @@ jobs:
 
           echo
           echo "===== file.c ====="
-          sed -n '1,100p' package/mdk4/src/src/osdep/file.c
+          sed -n '1,120p' package/mdk4/src/src/osdep/file.c
 
           echo
           echo "===== osdep.c ====="
           sed -n '1,50p' package/mdk4/src/src/osdep.c
+
+          echo
+          echo "===== network.c relevant lines ====="
+          grep -n -C 3 \
+            -E '__be64_to_cpu|__be32_to_cpu|ri_mactime|ri_power' \
+            package/mdk4/src/src/osdep/network.c || true
 
           echo
           echo "===== OpenWrt Makefile ====="
