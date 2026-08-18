@@ -56,7 +56,7 @@ jobs:
       - name: Patch MDK4 for modern libpcap
         working-directory: ${{ github.workspace }}
         run: |
-          python3 - <<'PY'
+          python3 -c '
           from pathlib import Path
 
           p = Path("src/osdep/file.c")
@@ -66,10 +66,7 @@ jobs:
 
           s = p.read_text()
 
-          # Modern libpcap exposes DLT_* names.
-          # Older MDK4 expects LINKTYPE_* names.
-
-          patch = r'''
+          patch = """\
           #ifndef TCPDUMP_MAGIC
           #define TCPDUMP_MAGIC 0xa1b2c3d4
           #endif
@@ -93,39 +90,25 @@ jobs:
           #ifndef LINKTYPE_PPI_HDR
           #define LINKTYPE_PPI_HDR DLT_PPI
           #endif
-          '''
 
-          if "LINKTYPE_ETHERNET" not in s:
-              raise SystemExit(
-                  "ERROR: MDK4 LINKTYPE constants not found in file.c"
-              )
+          """
+
+          if "TCPDUMP_MAGIC" not in s:
+              raise SystemExit("ERROR: TCPDUMP_MAGIC not found in file.c")
 
           if "#define LINKTYPE_ETHERNET" not in s:
-              marker = "#include <pcap.h>"
-
-              if marker not in s:
-                  raise SystemExit(
-                      "ERROR: #include <pcap.h> not found in file.c"
-                  )
-
-              s = s.replace(
-                  marker,
-                  marker + "\n" + patch,
-                  1
-              )
-
+              s = patch + s
               p.write_text(s)
 
-          print("===== Patched file.c =====")
-          print(p.read_text())
-          print("==========================")
+          print("MDK4 libpcap compatibility patch applied.")
+          '
 
       - name: Create temporary MDK4 OpenWrt package
         env:
           WORKSPACE: ${{ github.workspace }}
           SDK_DIR: ${{ runner.temp }}/${{ env.SDK }}
         run: |
-          python3 - <<'PY'
+          python3 -c '
           import os
           import shutil
           from pathlib import Path
@@ -202,12 +185,7 @@ jobs:
           source.mkdir(parents=True, exist_ok=True)
 
           for item in workspace.iterdir():
-
-              if item.name in {
-                  ".git",
-                  ".github",
-                  "package"
-              }:
+              if item.name in {".git", ".github", "package"}:
                   continue
 
               destination = source / item.name
@@ -219,20 +197,20 @@ jobs:
                       dirs_exist_ok=True
                   )
               else:
-                  shutil.copy2(
-                      item,
-                      destination
-                  )
+                  shutil.copy2(item, destination)
 
-          print("Temporary OpenWrt package created:")
-          print(package)
+          print("Temporary OpenWrt package created.")
+          '
 
-      - name: Verify OpenWrt Makefile
+      - name: Verify generated files
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
           echo "===== OpenWrt Makefile ====="
           cat -n package/mdk4/Makefile
-          echo "============================"
+
+          echo
+          echo "===== Patched file.c ====="
+          head -50 package/mdk4/src/src/osdep/file.c
 
       - name: Configure OpenWrt SDK
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
@@ -251,17 +229,15 @@ jobs:
 
           find bin/packages \
             -type f \
-            -name 'mdk4*.ipk' \
+            -name "mdk4*.ipk" \
             -print
-
-          echo "=============================="
 
       - name: Verify package
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
           IPK=$(find bin/packages \
             -type f \
-            -name 'mdk4*.ipk' \
+            -name "mdk4*.ipk" \
             | head -n1)
 
           if [ -z "$IPK" ]; then
