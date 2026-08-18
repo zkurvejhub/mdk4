@@ -59,8 +59,13 @@ jobs:
           python3 <<'PY'
           from pathlib import Path
 
-          # Fix MDK4's old byteorder compatibility header for
-          # modern GCC/musl/OpenWrt.
+          # ---------------------------------------------------------
+          # Fix byteorder.h.
+          #
+          # OpenWrt/musl already provides the endian conversion
+          # macros. Do not redefine them.
+          # ---------------------------------------------------------
+
           p = Path("src/osdep/byteorder.h")
 
           if not p.exists():
@@ -89,104 +94,52 @@ jobs:
           typedef uint64_t u_int64_t;
           #endif
 
-          #if __BYTE_ORDER == __LITTLE_ENDIAN
-
-          #define __be16_to_cpu(x) __builtin_bswap16((uint16_t)(x))
-          #define __be32_to_cpu(x) __builtin_bswap32((uint32_t)(x))
-          #define __be64_to_cpu(x) __builtin_bswap64((uint64_t)(x))
-
-          #define __cpu_to_be16(x) __builtin_bswap16((uint16_t)(x))
-          #define __cpu_to_be32(x) __builtin_bswap32((uint32_t)(x))
-          #define __cpu_to_be64(x) __builtin_bswap64((uint64_t)(x))
-
-          #define __le16_to_cpu(x) ((uint16_t)(x))
-          #define __le32_to_cpu(x) ((uint32_t)(x))
-          #define __le64_to_cpu(x) ((uint64_t)(x))
-
-          #define __cpu_to_le16(x) ((uint16_t)(x))
-          #define __cpu_to_le32(x) ((uint32_t)(x))
-          #define __cpu_to_le64(x) ((uint64_t)(x))
-
-          #define htobe16(x) __builtin_bswap16((uint16_t)(x))
-          #define htobe32(x) __builtin_bswap32((uint32_t)(x))
-          #define htobe64(x) __builtin_bswap64((uint64_t)(x))
-
-          #define betoh16(x) __builtin_bswap16((uint16_t)(x))
-          #define betoh32(x) __builtin_bswap32((uint32_t)(x))
-          #define betoh64(x) __builtin_bswap64((uint64_t)(x))
-
-          #define htole16(x) ((uint16_t)(x))
-          #define htole32(x) ((uint32_t)(x))
-          #define htole64(x) ((uint64_t)(x))
-
-          #define letoh16(x) ((uint16_t)(x))
-          #define letoh32(x) ((uint32_t)(x))
-          #define letoh64(x) ((uint64_t)(x))
-
-          #else
-
-          #define __be16_to_cpu(x) ((uint16_t)(x))
-          #define __be32_to_cpu(x) ((uint32_t)(x))
-          #define __be64_to_cpu(x) ((uint64_t)(x))
-
-          #define __cpu_to_be16(x) ((uint16_t)(x))
-          #define __cpu_to_be32(x) ((uint32_t)(x))
-          #define __cpu_to_be64(x) ((uint64_t)(x))
-
-          #define __le16_to_cpu(x) __builtin_bswap16((uint16_t)(x))
-          #define __le32_to_cpu(x) __builtin_bswap32((uint32_t)(x))
-          #define __le64_to_cpu(x) __builtin_bswap64((uint64_t)(x))
-
-          #define __cpu_to_le16(x) __builtin_bswap16((uint16_t)(x))
-          #define __cpu_to_le32(x) __builtin_bswap32((uint32_t)(x))
-          #define __cpu_to_le64(x) __builtin_bswap64((uint64_t)(x))
-
-          #define htobe16(x) ((uint16_t)(x))
-          #define htobe32(x) ((uint32_t)(x))
-          #define htobe64(x) ((uint64_t)(x))
-
-          #define betoh16(x) ((uint16_t)(x))
-          #define betoh32(x) ((uint32_t)(x))
-          #define betoh64(x) ((uint64_t)(x))
-
-          #define htole16(x) __builtin_bswap16((uint16_t)(x))
-          #define htole32(x) __builtin_bswap32((uint32_t)(x))
-          #define htole64(x) __builtin_bswap64((uint64_t)(x))
-
-          #define letoh16(x) __builtin_bswap16((uint16_t)(x))
-          #define letoh32(x) __builtin_bswap32((uint32_t)(x))
-          #define letoh64(x) __builtin_bswap64((uint64_t)(x))
-
+          #ifndef cpu_to_le16
+          #define cpu_to_le16(x) htole16(x)
           #endif
 
-          #define cpu_to_le64 __cpu_to_le64
-          #define le64_to_cpu __le64_to_cpu
-          #define cpu_to_le32 __cpu_to_le32
-          #define le32_to_cpu __le32_to_cpu
-          #define cpu_to_le16 __cpu_to_le16
-          #define le16_to_cpu __le16_to_cpu
-
-          #define cpu_to_be64 __cpu_to_be64
-          #define be64_to_cpu __be64_to_cpu
-          #define cpu_to_be32 __cpu_to_be32
-          #define be32_to_cpu __be32_to_cpu
-          #define cpu_to_be16 __cpu_to_be16
-          #define be16_to_cpu __be16_to_cpu
-
-          #ifndef le16toh
-          #define le16toh le16_to_cpu
+          #ifndef le16_to_cpu
+          #define le16_to_cpu(x) letoh16(x)
           #endif
 
-          #ifndef be16toh
-          #define be16toh be16_to_cpu
+          #ifndef cpu_to_le32
+          #define cpu_to_le32(x) htole32(x)
           #endif
 
-          #ifndef le32toh
-          #define le32toh le32_to_cpu
+          #ifndef le32_to_cpu
+          #define le32_to_cpu(x) letoh32(x)
           #endif
 
-          #ifndef be32toh
-          #define be32toh be32_to_cpu
+          #ifndef cpu_to_le64
+          #define cpu_to_le64(x) htole64(x)
+          #endif
+
+          #ifndef le64_to_cpu
+          #define le64_to_cpu(x) letoh64(x)
+          #endif
+
+          #ifndef cpu_to_be16
+          #define cpu_to_be16(x) htobe16(x)
+          #endif
+
+          #ifndef be16_to_cpu
+          #define be16_to_cpu(x) betoh16(x)
+          #endif
+
+          #ifndef cpu_to_be32
+          #define cpu_to_be32(x) htobe32(x)
+          #endif
+
+          #ifndef be32_to_cpu
+          #define be32_to_cpu(x) betoh32(x)
+          #endif
+
+          #ifndef cpu_to_be64
+          #define cpu_to_be64(x) htobe64(x)
+          #endif
+
+          #ifndef be64_to_cpu
+          #define be64_to_cpu(x) betoh64(x)
           #endif
 
           #endif
@@ -199,7 +152,10 @@ jobs:
 
           p.write_text(byteorder)
 
-          # Fix old LINKTYPE_* names used by file.c with modern libpcap.
+          # ---------------------------------------------------------
+          # file.c compatibility with modern libpcap.
+          # ---------------------------------------------------------
+
           p = Path("src/osdep/file.c")
 
           if not p.exists():
@@ -231,7 +187,6 @@ jobs:
           #ifndef LINKTYPE_PPI_HDR
           #define LINKTYPE_PPI_HDR DLT_PPI
           #endif
-
           '''
 
           patch = "\n".join(
@@ -244,7 +199,23 @@ jobs:
 
           p.write_text(s)
 
+          # ---------------------------------------------------------
+          # osdep.c needs unistd.h for usleep().
+          # ---------------------------------------------------------
+
+          p = Path("src/osdep.c")
+
+          if not p.exists():
+              raise SystemExit("ERROR: src/osdep.c not found")
+
+          s = p.read_text()
+
+          if "#include <unistd.h>" not in s:
+              s = "#include <unistd.h>\n" + s
+              p.write_text(s)
+
           print("MDK4 OpenWrt/musl compatibility patches applied.")
+          PY
 
       - name: Create temporary OpenWrt package
         env:
@@ -346,16 +317,21 @@ jobs:
                   shutil.copy2(item, destination)
 
           print("Temporary OpenWrt package created.")
+          PY
 
       - name: Verify patched sources
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
           echo "===== byteorder.h ====="
-          sed -n '1,220p' package/mdk4/src/src/osdep/byteorder.h
+          sed -n '1,180p' package/mdk4/src/src/osdep/byteorder.h
 
           echo
           echo "===== file.c ====="
           sed -n '1,100p' package/mdk4/src/src/osdep/file.c
+
+          echo
+          echo "===== osdep.c ====="
+          sed -n '1,50p' package/mdk4/src/src/osdep.c
 
           echo
           echo "===== OpenWrt Makefile ====="
