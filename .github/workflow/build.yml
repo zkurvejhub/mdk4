@@ -1,0 +1,182 @@
+name: Build MDK4 for OpenWrt MT7621
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - '.github/workflows/openwrt-mt7621.yml'
+      - 'src/**'
+      - 'osdep/**'
+      - 'Makefile'
+      - 'Makefile.inc'
+      - 'include/**'
+      - 'package/**'
+
+permissions:
+  contents: read
+
+env:
+  OPENWRT_VERSION: "25.12.4"
+  TARGET: "ramips/mt7621"
+  SDK: "openwrt-sdk-25.12.4-ramips-mt7621_gcc-14.3.0_musl.Linux-x86_64"
+
+jobs:
+  build:
+    name: Build MDK4 - OpenWrt MT7621
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout MDK4 fork
+        uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            git \
+            wget \
+            curl \
+            file \
+            zstd \
+            tar \
+            pkg-config
+
+      - name: Download OpenWrt SDK
+        working-directory: ${{ runner.temp }}
+        run: |
+          wget -q --show-progress \
+            "https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/${TARGET}/${SDK}.tar.zst"
+
+      - name: Extract OpenWrt SDK
+        working-directory: ${{ runner.temp }}
+        run: |
+          tar --zstd -xf "${SDK}.tar.zst"
+
+      - name: Prepare OpenWrt package
+        run: |
+          mkdir -p "${{ runner.temp }}/${SDK}/package/mdk4"
+
+          cp -a . "${{ runner.temp }}/${SDK}/package/mdk4/source"
+
+          cat > "${{ runner.temp }}/${SDK}/package/mdk4/Makefile" <<'EOF'
+          include $(TOPDIR)/rules.mk
+
+          PKG_NAME:=mdk4
+          PKG_VERSION:=4.2
+          PKG_RELEASE:=1
+
+          PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
+
+          PKG_LICENSE:=GPL-3.0-or-later
+          PKG_LICENSE_FILES:=COPYING
+
+          PKG_MAINTAINER:=MDK4 OpenWrt Build
+
+          PKG_BUILD_PARALLEL:=1
+
+          include $(INCLUDE_DIR)/package.mk
+
+          define Package/mdk4
+            SECTION:=net
+            CATEGORY:=Network
+            SUBMENU:=Wireless
+            TITLE:=MDK4 WiFi testing tool
+            URL:=https://github.com/aircrack-ng/mdk4
+            DEPENDS:=+libnl-core +libnl-genl +libpcap +libpthread
+          endef
+
+          define Package/mdk4/description
+            MDK4 is a WiFi testing tool from the Aircrack-ng project.
+          endef
+
+          TARGET_CPPFLAGS += \
+            -I$(STAGING_DIR)/usr/include \
+            -I$(STAGING_DIR)/usr/include/libnl3
+
+          TARGET_LDFLAGS += \
+            -L$(STAGING_DIR)/usr/lib
+
+          define Build/Prepare
+            mkdir -p $(PKG_BUILD_DIR)
+            cp -a $(CURDIR)/source/. $(PKG_BUILD_DIR)/
+          endef
+
+          define Build/Compile
+            $(MAKE) -C $(PKG_BUILD_DIR) \
+              CC="$(TARGET_CC)" \
+              CXX="$(TARGET_CXX)" \
+              AR="$(TARGET_AR)" \
+              RANLIB="$(TARGET_RANLIB)" \
+              STRIP="$(TARGET_STRIP)" \
+              CFLAGS="$(TARGET_CFLAGS) $(TARGET_CPPFLAGS)" \
+              LDFLAGS="$(TARGET_LDFLAGS)" \
+              LIBS="-lnl-3 -lnl-genl-3 -lpcap -lpthread"
+          endef
+
+          define Package/mdk4/install
+            $(INSTALL_DIR) $(1)/usr/sbin
+            $(INSTALL_BIN) $(PKG_BUILD_DIR)/mdk4 $(1)/usr/sbin/mdk4
+          endef
+
+          $(eval $(call BuildPackage,mdk4))
+          EOF
+
+      - name: Update OpenWrt feeds
+        working-directory: ${{ runner.temp }}/${{ env.SDK }}
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install libnl-core
+          ./scripts/feeds install libnl-genl
+          ./scripts/feeds install libpcap
+
+      - name: Build MDK4 package
+        working-directory: ${{ runner.temp }}/${{ env.SDK }}
+        run: |
+          make defconfig
+
+          make package/mdk4/compile V=s -j2
+
+      - name: Find generated package
+        working-directory: ${{ runner.temp }}/${{ env.SDK }}
+        run: |
+          find bin/packages -type f -name 'mdk4*.ipk' -print
+
+      - name: Verify architecture
+        working-directory: ${{ runner.temp }}/${{ env.SDK }}
+        run: |
+          IPK=$(find bin/packages -type f -name 'mdk4*.ipk' | head -n1)
+
+          if [ -z "$IPK" ]; then
+            echo "ERROR: MDK4 IPK was not generated"
+            exit 1
+          fi
+
+          echo "Generated package:"
+          file "$IPK"
+
+          echo "Package information:"
+          tar -xOf "$IPK" ./control.tar.zst 2>/dev/null || true
+
+      - name: Collect IPK
+        run: |
+          mkdir -p artifacts
+
+          find "${{ runner.temp }}/${SDK}/bin/packages" \
+            -type f \
+            -name 'mdk4*.ipk' \
+            -exec cp {} artifacts/ \;
+
+          ls -lah artifacts
+
+      - name: Upload MDK4 IPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mdk4-openwrt-mt7621
+          path: artifacts/*.ipk
+          if-no-files-found: error
+          retention-days: 30
