@@ -53,12 +53,153 @@ jobs:
           ./scripts/feeds install libnl-genl
           ./scripts/feeds install libpcap
 
-      - name: Patch MDK4 for modern libpcap
+      - name: Patch MDK4 for OpenWrt musl
         working-directory: ${{ github.workspace }}
         run: |
-          python3 -c '
+          python3 <<'PY'
           from pathlib import Path
 
+          # Fix MDK4's old byteorder compatibility header for
+          # modern GCC/musl/OpenWrt.
+          p = Path("src/osdep/byteorder.h")
+
+          if not p.exists():
+              raise SystemExit("ERROR: src/osdep/byteorder.h not found")
+
+          byteorder = r'''#ifndef MDK4_BYTEORDER_H
+          #define MDK4_BYTEORDER_H
+
+          #include <stdint.h>
+          #include <sys/types.h>
+          #include <endian.h>
+
+          #ifndef u_int8_t
+          typedef uint8_t u_int8_t;
+          #endif
+
+          #ifndef u_int16_t
+          typedef uint16_t u_int16_t;
+          #endif
+
+          #ifndef u_int32_t
+          typedef uint32_t u_int32_t;
+          #endif
+
+          #ifndef u_int64_t
+          typedef uint64_t u_int64_t;
+          #endif
+
+          #if __BYTE_ORDER == __LITTLE_ENDIAN
+
+          #define __be16_to_cpu(x) __builtin_bswap16((uint16_t)(x))
+          #define __be32_to_cpu(x) __builtin_bswap32((uint32_t)(x))
+          #define __be64_to_cpu(x) __builtin_bswap64((uint64_t)(x))
+
+          #define __cpu_to_be16(x) __builtin_bswap16((uint16_t)(x))
+          #define __cpu_to_be32(x) __builtin_bswap32((uint32_t)(x))
+          #define __cpu_to_be64(x) __builtin_bswap64((uint64_t)(x))
+
+          #define __le16_to_cpu(x) ((uint16_t)(x))
+          #define __le32_to_cpu(x) ((uint32_t)(x))
+          #define __le64_to_cpu(x) ((uint64_t)(x))
+
+          #define __cpu_to_le16(x) ((uint16_t)(x))
+          #define __cpu_to_le32(x) ((uint32_t)(x))
+          #define __cpu_to_le64(x) ((uint64_t)(x))
+
+          #define htobe16(x) __builtin_bswap16((uint16_t)(x))
+          #define htobe32(x) __builtin_bswap32((uint32_t)(x))
+          #define htobe64(x) __builtin_bswap64((uint64_t)(x))
+
+          #define betoh16(x) __builtin_bswap16((uint16_t)(x))
+          #define betoh32(x) __builtin_bswap32((uint32_t)(x))
+          #define betoh64(x) __builtin_bswap64((uint64_t)(x))
+
+          #define htole16(x) ((uint16_t)(x))
+          #define htole32(x) ((uint32_t)(x))
+          #define htole64(x) ((uint64_t)(x))
+
+          #define letoh16(x) ((uint16_t)(x))
+          #define letoh32(x) ((uint32_t)(x))
+          #define letoh64(x) ((uint64_t)(x))
+
+          #else
+
+          #define __be16_to_cpu(x) ((uint16_t)(x))
+          #define __be32_to_cpu(x) ((uint32_t)(x))
+          #define __be64_to_cpu(x) ((uint64_t)(x))
+
+          #define __cpu_to_be16(x) ((uint16_t)(x))
+          #define __cpu_to_be32(x) ((uint32_t)(x))
+          #define __cpu_to_be64(x) ((uint64_t)(x))
+
+          #define __le16_to_cpu(x) __builtin_bswap16((uint16_t)(x))
+          #define __le32_to_cpu(x) __builtin_bswap32((uint32_t)(x))
+          #define __le64_to_cpu(x) __builtin_bswap64((uint64_t)(x))
+
+          #define __cpu_to_le16(x) __builtin_bswap16((uint16_t)(x))
+          #define __cpu_to_le32(x) __builtin_bswap32((uint32_t)(x))
+          #define __cpu_to_le64(x) __builtin_bswap64((uint64_t)(x))
+
+          #define htobe16(x) ((uint16_t)(x))
+          #define htobe32(x) ((uint32_t)(x))
+          #define htobe64(x) ((uint64_t)(x))
+
+          #define betoh16(x) ((uint16_t)(x))
+          #define betoh32(x) ((uint32_t)(x))
+          #define betoh64(x) ((uint64_t)(x))
+
+          #define htole16(x) __builtin_bswap16((uint16_t)(x))
+          #define htole32(x) __builtin_bswap32((uint32_t)(x))
+          #define htole64(x) __builtin_bswap64((uint64_t)(x))
+
+          #define letoh16(x) __builtin_bswap16((uint16_t)(x))
+          #define letoh32(x) __builtin_bswap32((uint32_t)(x))
+          #define letoh64(x) __builtin_bswap64((uint64_t)(x))
+
+          #endif
+
+          #define cpu_to_le64 __cpu_to_le64
+          #define le64_to_cpu __le64_to_cpu
+          #define cpu_to_le32 __cpu_to_le32
+          #define le32_to_cpu __le32_to_cpu
+          #define cpu_to_le16 __cpu_to_le16
+          #define le16_to_cpu __le16_to_cpu
+
+          #define cpu_to_be64 __cpu_to_be64
+          #define be64_to_cpu __be64_to_cpu
+          #define cpu_to_be32 __cpu_to_be32
+          #define be32_to_cpu __be32_to_cpu
+          #define cpu_to_be16 __cpu_to_be16
+          #define be16_to_cpu __be16_to_cpu
+
+          #ifndef le16toh
+          #define le16toh le16_to_cpu
+          #endif
+
+          #ifndef be16toh
+          #define be16toh be16_to_cpu
+          #endif
+
+          #ifndef le32toh
+          #define le32toh le32_to_cpu
+          #endif
+
+          #ifndef be32toh
+          #define be32toh be32_to_cpu
+          #endif
+
+          #endif
+          '''
+
+          byteorder = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in byteorder.splitlines()
+          ) + "\n"
+
+          p.write_text(byteorder)
+
+          # Fix old LINKTYPE_* names used by file.c with modern libpcap.
           p = Path("src/osdep/file.c")
 
           if not p.exists():
@@ -66,7 +207,7 @@ jobs:
 
           s = p.read_text()
 
-          patch = """\
+          patch = r'''
           #ifndef TCPDUMP_MAGIC
           #define TCPDUMP_MAGIC 0xa1b2c3d4
           #endif
@@ -91,24 +232,26 @@ jobs:
           #define LINKTYPE_PPI_HDR DLT_PPI
           #endif
 
-          """
+          '''
 
-          if "TCPDUMP_MAGIC" not in s:
-              raise SystemExit("ERROR: TCPDUMP_MAGIC not found in file.c")
+          patch = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in patch.splitlines()
+          ) + "\n"
 
           if "#define LINKTYPE_ETHERNET" not in s:
               s = patch + s
-              p.write_text(s)
 
-          print("MDK4 libpcap compatibility patch applied.")
-          '
+          p.write_text(s)
 
-      - name: Create temporary MDK4 OpenWrt package
+          print("MDK4 OpenWrt/musl compatibility patches applied.")
+
+      - name: Create temporary OpenWrt package
         env:
           WORKSPACE: ${{ github.workspace }}
           SDK_DIR: ${{ runner.temp }}/${{ env.SDK }}
         run: |
-          python3 -c '
+          python3 <<'PY'
           import os
           import shutil
           from pathlib import Path
@@ -119,7 +262,7 @@ jobs:
           package = sdk / "package" / "mdk4"
           package.mkdir(parents=True, exist_ok=True)
 
-          makefile = """include $(TOPDIR)/rules.mk
+          makefile = r'''include $(TOPDIR)/rules.mk
 
           PKG_NAME:=mdk4
           PKG_VERSION:=4.2
@@ -146,46 +289,49 @@ jobs:
           endef
 
           define Build/Prepare
-          \tmkdir -p $(PKG_BUILD_DIR)
-          \tcp -a $(CURDIR)/src/. $(PKG_BUILD_DIR)/
+          	mkdir -p $(PKG_BUILD_DIR)
+          	cp -a $(CURDIR)/src/. $(PKG_BUILD_DIR)/
           endef
 
           define Build/Compile
-          \t$(MAKE) -C $(PKG_BUILD_DIR) \\
-          \t\tCC="$(TARGET_CC)" \\
-          \t\tAR="$(TARGET_AR)" \\
-          \t\tRANLIB="$(TARGET_RANLIB)" \\
-          \t\tSTRIP="$(TARGET_STRIP)" \\
-          \t\tCFLAGS="$(TARGET_CFLAGS)" \\
-          \t\tLDFLAGS="$(TARGET_LDFLAGS)"
+          	$(MAKE) -C $(PKG_BUILD_DIR) \
+          		CC="$(TARGET_CC)" \
+          		AR="$(TARGET_AR)" \
+          		RANLIB="$(TARGET_RANLIB)" \
+          		STRIP="$(TARGET_STRIP)" \
+          		CFLAGS="$(TARGET_CFLAGS) -mno-mips16" \
+          		LDFLAGS="$(TARGET_LDFLAGS)"
           endef
 
           define Package/mdk4/install
-          \t$(INSTALL_DIR) $(1)/usr/sbin
-          \t$(INSTALL_BIN) $(PKG_BUILD_DIR)/mdk4 $(1)/usr/sbin/mdk4
+          	$(INSTALL_DIR) $(1)/usr/sbin
+          	$(INSTALL_BIN) $(PKG_BUILD_DIR)/mdk4 $(1)/usr/sbin/mdk4
           endef
 
           $(eval $(call BuildPackage,mdk4))
-          """
+          '''
 
-          lines = makefile.splitlines()
-          cleaned = []
-
-          for line in lines:
-              if line.startswith("          "):
-                  line = line[10:]
-              cleaned.append(line)
+          makefile = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in makefile.splitlines()
+          ) + "\n"
 
           (package / "Makefile").write_text(
-              "\n".join(cleaned) + "\n",
+              makefile,
               encoding="utf-8"
           )
 
           source = package / "src"
           source.mkdir(parents=True, exist_ok=True)
 
+          excluded = {
+              ".git",
+              ".github",
+              "package"
+          }
+
           for item in workspace.iterdir():
-              if item.name in {".git", ".github", "package"}:
+              if item.name in excluded:
                   continue
 
               destination = source / item.name
@@ -200,17 +346,20 @@ jobs:
                   shutil.copy2(item, destination)
 
           print("Temporary OpenWrt package created.")
-          '
 
-      - name: Verify generated files
+      - name: Verify patched sources
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
-          echo "===== OpenWrt Makefile ====="
-          cat -n package/mdk4/Makefile
+          echo "===== byteorder.h ====="
+          sed -n '1,220p' package/mdk4/src/src/osdep/byteorder.h
 
           echo
-          echo "===== Patched file.c ====="
-          head -50 package/mdk4/src/src/osdep/file.c
+          echo "===== file.c ====="
+          sed -n '1,100p' package/mdk4/src/src/osdep/file.c
+
+          echo
+          echo "===== OpenWrt Makefile ====="
+          cat -n package/mdk4/Makefile
 
       - name: Configure OpenWrt SDK
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
@@ -220,7 +369,29 @@ jobs:
       - name: Build MDK4
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
-          make package/mdk4/compile V=s -j2
+          set -o pipefail
+
+          make package/mdk4/compile V=s -j1 2>&1 | tee mdk4-build.log
+
+          BUILD_STATUS=${PIPESTATUS[0]}
+
+          echo
+          echo "========================================"
+          echo "MDK4 compiler errors"
+          echo "========================================"
+
+          grep -n -E \
+            'error:|fatal error:|undefined reference|No such file|not found' \
+            mdk4-build.log || true
+
+          echo
+          echo "========================================"
+          echo "Last 150 lines"
+          echo "========================================"
+
+          tail -150 mdk4-build.log
+
+          exit $BUILD_STATUS
 
       - name: Find generated IPK
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
