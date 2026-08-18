@@ -449,40 +449,43 @@ jobs:
 
           exit $BUILD_STATUS
 
-      - name: Find generated IPK
+      - name: Find generated APK
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
           echo "===== Generated packages ====="
 
           find bin/packages \
             -type f \
-            -name "mdk4*.ipk" \
+            -name "mdk4*.apk" \
             -print
 
       - name: Verify package
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
-          IPK=$(find bin/packages \
+          APK=$(find bin/packages \
             -type f \
-            -name "mdk4*.ipk" \
+            -name "mdk4*.apk" \
             | head -n1)
 
-          if [ -z "$IPK" ]; then
-            echo "ERROR: No MDK4 IPK was generated"
+          if [ -z "$APK" ]; then
+            echo "ERROR: No MDK4 APK was generated"
+            echo
+            echo "Available packages:"
+            find bin/packages -type f -print || true
             exit 1
           fi
 
           echo "Generated package:"
-          echo "$IPK"
+          echo "$APK"
 
           echo
-          echo "Package architecture:"
-          file "$IPK"
+          echo "Package information:"
+          file "$APK"
 
-      - name: Upload MDK4 IPK
+      - name: Upload MDK4 APK
         uses: actions/upload-artifact@v4
         with:
           name: mdk4-openwrt-mt7621
-          path: ${{ runner.temp }}/${{ env.SDK }}/bin/packages/**/*.ipk
+          path: ${{ runner.temp }}/${{ env.SDK }}/bin/packages/**/*.apk
           if-no-files-found: error
           retention-days: 30
