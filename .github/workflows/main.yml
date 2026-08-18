@@ -334,7 +334,7 @@ jobs:
 
           define Package/mdk4/install
           	$(INSTALL_DIR) $(1)/usr/sbin
-          	$(INSTALL_BIN) $(PKG_BUILD_DIR)/mdk4 $(1)/usr/sbin/mdk4
+          	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/mdk4 $(1)/usr/sbin/mdk4
           endef
 
           $(eval $(call BuildPackage,mdk4))
