@@ -209,6 +209,7 @@ jobs:
 
           # ---------------------------------------------------------
           # network.c compatibility
+          #
           # Fix MDK4 typo:
           #
           #   << 32 || buf[1]
@@ -233,20 +234,7 @@ jobs:
           # ---------------------------------------------------------
           # channelhopper.c
           #
-          # MDK4 contains an old libnl 1.x compatibility block:
-          #
-          #   nl_handle_alloc()
-          #   nl_handle_destroy()
-          #   nl_set_buffer_size()
-          #
-          # OpenWrt 25.12 provides libnl3, where these compatibility
-          # wrappers must NOT be compiled.
-          #
-          # Define CONFIG_LIBNL30 so MDK4 uses the native libnl3 API:
-          #
-          #   nl_socket_alloc()
-          #   nl_socket_free()
-          #   nl_socket_set_buffer_size()
+          # Force the modern libnl3 API.
           # ---------------------------------------------------------
           p = Path("src/channelhopper.c")
           if not p.exists():
@@ -254,37 +242,32 @@ jobs:
 
           s = p.read_text(encoding="utf-8")
 
-          marker = "/* OpenWrt: use native libnl3 API */"
-
-          if marker not in s:
-              compatibility_marker = (
-                  "/* libnl 1.x compatibility code */"
+          # Force libnl3 API selection.
+          if "#define CONFIG_LIBNL30 1" not in s:
+              s = (
+                  "#ifndef CONFIG_LIBNL30\n"
+                  "#define CONFIG_LIBNL30 1\n"
+                  "#endif\n\n"
+                  + s
               )
 
-              if compatibility_marker in s:
-                  s = s.replace(
-                      compatibility_marker,
-                      marker + "\n"
-                      "#ifndef CONFIG_LIBNL30\n"
-                      "#define CONFIG_LIBNL30 1\n"
-                      "#endif\n\n"
-                      + compatibility_marker,
-                      1
-                  )
-              else:
-                  # Fallback: force libnl3 selection at the beginning
-                  # of the file if the upstream compatibility block
-                  # has changed.
-                  s = (
-                      "#ifndef CONFIG_LIBNL30\n"
-                      "#define CONFIG_LIBNL30 1\n"
-                      "#endif\n\n"
-                      + s
-                  )
+          # ---------------------------------------------------------
+          # pthread_t is not an int on musl/MIPS.
+          #
+          # Old:
+          #   pthread_t chan_sniffer = (int)NULL;
+          #
+          # Correct:
+          #   pthread_t chan_sniffer = 0;
+          # ---------------------------------------------------------
+          s = s.replace(
+              "pthread_t chan_sniffer = (int)NULL;",
+              "pthread_t chan_sniffer = 0;"
+          )
 
           p.write_text(s, encoding="utf-8")
 
-          print("MDK4 OpenWrt/musl/libnl3 compatibility patches applied.")
+          print("MDK4 OpenWrt/musl/libnl3/pthread compatibility patches applied.")
           PY
 
       - name: Create temporary OpenWrt package
@@ -308,7 +291,7 @@ jobs:
 
           PKG_NAME:=mdk4
           PKG_VERSION:=4.2
-          PKG_RELEASE:=3
+          PKG_RELEASE:=4
 
           PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
@@ -425,9 +408,9 @@ jobs:
             package/mdk4/src/src/osdep/network.c || true
 
           echo
-          echo "===== channelhopper.c libnl section ====="
-          grep -n -C 8 \
-            -E 'CONFIG_LIBNL30|libnl 1.x compatibility|nl_socket_alloc|nl_handle_alloc' \
+          echo "===== channelhopper.c compatibility ====="
+          grep -n -C 5 \
+            -E 'CONFIG_LIBNL30|chan_sniffer|nl_socket_alloc|nl_handle_alloc|nl_socket_free|nl_handle_destroy' \
             package/mdk4/src/src/channelhopper.c || true
 
           echo
