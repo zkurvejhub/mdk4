@@ -54,7 +54,7 @@ jobs:
           ./scripts/feeds install libnl-genl
           ./scripts/feeds install libpcap
 
-      - name: Patch MDK4 for OpenWrt musl
+      - name: Patch MDK4 for OpenWrt musl and libnl3
         working-directory: ${{ github.workspace }}
         run: |
           python3 <<'PY'
@@ -62,6 +62,7 @@ jobs:
 
           # ---------------------------------------------------------
           # byteorder.h
+          # Use endian definitions supplied by OpenWrt/musl.
           # ---------------------------------------------------------
           p = Path("src/osdep/byteorder.h")
           if not p.exists():
@@ -208,6 +209,13 @@ jobs:
 
           # ---------------------------------------------------------
           # network.c compatibility
+          # Fix MDK4 typo:
+          #
+          #   << 32 || buf[1]
+          #
+          # must be:
+          #
+          #   << 32 | buf[1]
           # ---------------------------------------------------------
           p = Path("src/osdep/network.c")
           if not p.exists():
@@ -222,7 +230,61 @@ jobs:
 
           p.write_text(s, encoding="utf-8")
 
-          print("MDK4 OpenWrt/musl compatibility patches applied.")
+          # ---------------------------------------------------------
+          # channelhopper.c
+          #
+          # MDK4 contains an old libnl 1.x compatibility block:
+          #
+          #   nl_handle_alloc()
+          #   nl_handle_destroy()
+          #   nl_set_buffer_size()
+          #
+          # OpenWrt 25.12 provides libnl3, where these compatibility
+          # wrappers must NOT be compiled.
+          #
+          # Define CONFIG_LIBNL30 so MDK4 uses the native libnl3 API:
+          #
+          #   nl_socket_alloc()
+          #   nl_socket_free()
+          #   nl_socket_set_buffer_size()
+          # ---------------------------------------------------------
+          p = Path("src/channelhopper.c")
+          if not p.exists():
+              raise SystemExit("ERROR: src/channelhopper.c not found")
+
+          s = p.read_text(encoding="utf-8")
+
+          marker = "/* OpenWrt: use native libnl3 API */"
+
+          if marker not in s:
+              compatibility_marker = (
+                  "/* libnl 1.x compatibility code */"
+              )
+
+              if compatibility_marker in s:
+                  s = s.replace(
+                      compatibility_marker,
+                      marker + "\n"
+                      "#ifndef CONFIG_LIBNL30\n"
+                      "#define CONFIG_LIBNL30 1\n"
+                      "#endif\n\n"
+                      + compatibility_marker,
+                      1
+                  )
+              else:
+                  # Fallback: force libnl3 selection at the beginning
+                  # of the file if the upstream compatibility block
+                  # has changed.
+                  s = (
+                      "#ifndef CONFIG_LIBNL30\n"
+                      "#define CONFIG_LIBNL30 1\n"
+                      "#endif\n\n"
+                      + s
+                  )
+
+          p.write_text(s, encoding="utf-8")
+
+          print("MDK4 OpenWrt/musl/libnl3 compatibility patches applied.")
           PY
 
       - name: Create temporary OpenWrt package
@@ -246,7 +308,7 @@ jobs:
 
           PKG_NAME:=mdk4
           PKG_VERSION:=4.2
-          PKG_RELEASE:=2
+          PKG_RELEASE:=3
 
           PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
@@ -282,9 +344,9 @@ jobs:
           		AR="$(TARGET_AR)" \
           		RANLIB="$(TARGET_RANLIB)" \
           		STRIP="$(TARGET_STRIP)" \
-          		CFLAGS="$(TARGET_CFLAGS) -mno-mips16 -I$(STAGING_DIR)/usr/include/libnl3" \
-          		CPPFLAGS="$(TARGET_CPPFLAGS) -I$(STAGING_DIR)/usr/include/libnl3" \
-          		LDFLAGS="$(TARGET_LDFLAGS) -lnl-genl-3 -lnl-3"
+          		CFLAGS="$(TARGET_CFLAGS) -mno-mips16 -DCONFIG_LIBNL30=1 -I$(STAGING_DIR)/usr/include/libnl3" \
+          		CPPFLAGS="$(TARGET_CPPFLAGS) -DCONFIG_LIBNL30=1 -I$(STAGING_DIR)/usr/include/libnl3" \
+          		LDFLAGS="$(TARGET_LDFLAGS) -L$(STAGING_DIR)/usr/lib -lnl-genl-3 -lnl-3"
           endef
 
           define Package/mdk4/install
@@ -330,19 +392,31 @@ jobs:
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
           echo "===== libnl headers ====="
-          find staging_dir -path '*include/libnl3/netlink/genl/genl.h' -print
+          find staging_dir \
+            -path '*include/libnl3/netlink/genl/genl.h' \
+            -print
+
+          echo
+          echo "===== libnl libraries ====="
+          find staging_dir \
+            -type f \
+            \( -name 'libnl-3.so*' -o -name 'libnl-genl-3.so*' \) \
+            -print
 
           echo
           echo "===== byteorder.h ====="
-          sed -n '1,180p' package/mdk4/src/src/osdep/byteorder.h
+          sed -n '1,180p' \
+            package/mdk4/src/src/osdep/byteorder.h
 
           echo
           echo "===== file.c ====="
-          sed -n '1,120p' package/mdk4/src/src/osdep/file.c
+          sed -n '1,120p' \
+            package/mdk4/src/src/osdep/file.c
 
           echo
           echo "===== osdep.c ====="
-          sed -n '1,50p' package/mdk4/src/src/osdep.c
+          sed -n '1,50p' \
+            package/mdk4/src/src/osdep.c
 
           echo
           echo "===== network.c relevant lines ====="
@@ -351,8 +425,10 @@ jobs:
             package/mdk4/src/src/osdep/network.c || true
 
           echo
-          echo "===== channelhopper.c ====="
-          sed -n '1,60p' package/mdk4/src/src/channelhopper.c
+          echo "===== channelhopper.c libnl section ====="
+          grep -n -C 8 \
+            -E 'CONFIG_LIBNL30|libnl 1.x compatibility|nl_socket_alloc|nl_handle_alloc' \
+            package/mdk4/src/src/channelhopper.c || true
 
           echo
           echo "===== OpenWrt Makefile ====="
