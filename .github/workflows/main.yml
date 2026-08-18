@@ -34,50 +34,6 @@ jobs:
             file \
             python3
 
-      - name: Patch MDK4 for modern libpcap
-        working-directory: ${{ github.workspace }}
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("src/osdep/file.c")
-
-          if not p.exists():
-              raise SystemExit("ERROR: src/osdep/file.c not found")
-
-          s = p.read_text()
-
-          if "TCPDUMP_MAGIC" not in s:
-              raise SystemExit(
-                  "ERROR: TCPDUMP_MAGIC was not found in src/osdep/file.c"
-              )
-
-          if "#define TCPDUMP_MAGIC" not in s:
-              marker = "#include <pcap.h>"
-
-              if marker in s:
-                  s = s.replace(
-                      marker,
-                      marker + "\n\n"
-                      "#ifndef TCPDUMP_MAGIC\n"
-                      "#define TCPDUMP_MAGIC 0xa1b2c3d4\n"
-                      "#endif",
-                      1
-                  )
-              else:
-                  s = (
-                      "#ifndef TCPDUMP_MAGIC\n"
-                      "#define TCPDUMP_MAGIC 0xa1b2c3d4\n"
-                      "#endif\n\n"
-                      + s
-                  )
-
-              p.write_text(s)
-
-          print("===== Patched src/osdep/file.c =====")
-          print(p.read_text())
-          print("====================================")
-
       - name: Download OpenWrt SDK
         working-directory: ${{ runner.temp }}
         run: |
@@ -96,6 +52,73 @@ jobs:
           ./scripts/feeds install libnl-core
           ./scripts/feeds install libnl-genl
           ./scripts/feeds install libpcap
+
+      - name: Patch MDK4 for modern libpcap
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("src/osdep/file.c")
+
+          if not p.exists():
+              raise SystemExit("ERROR: src/osdep/file.c not found")
+
+          s = p.read_text()
+
+          # Modern libpcap exposes DLT_* names.
+          # Older MDK4 expects LINKTYPE_* names.
+
+          patch = r'''
+          #ifndef TCPDUMP_MAGIC
+          #define TCPDUMP_MAGIC 0xa1b2c3d4
+          #endif
+
+          #ifndef LINKTYPE_ETHERNET
+          #define LINKTYPE_ETHERNET DLT_EN10MB
+          #endif
+
+          #ifndef LINKTYPE_IEEE802_11
+          #define LINKTYPE_IEEE802_11 DLT_IEEE802_11
+          #endif
+
+          #ifndef LINKTYPE_RADIOTAP_HDR
+          #define LINKTYPE_RADIOTAP_HDR DLT_IEEE802_11_RADIO
+          #endif
+
+          #ifndef LINKTYPE_PRISM_HEADER
+          #define LINKTYPE_PRISM_HEADER DLT_PRISM_HEADER
+          #endif
+
+          #ifndef LINKTYPE_PPI_HDR
+          #define LINKTYPE_PPI_HDR DLT_PPI
+          #endif
+          '''
+
+          if "LINKTYPE_ETHERNET" not in s:
+              raise SystemExit(
+                  "ERROR: MDK4 LINKTYPE constants not found in file.c"
+              )
+
+          if "#define LINKTYPE_ETHERNET" not in s:
+              marker = "#include <pcap.h>"
+
+              if marker not in s:
+                  raise SystemExit(
+                      "ERROR: #include <pcap.h> not found in file.c"
+                  )
+
+              s = s.replace(
+                  marker,
+                  marker + "\n" + patch,
+                  1
+              )
+
+              p.write_text(s)
+
+          print("===== Patched file.c =====")
+          print(p.read_text())
+          print("==========================")
 
       - name: Create temporary MDK4 OpenWrt package
         env:
@@ -162,7 +185,6 @@ jobs:
           $(eval $(call BuildPackage,mdk4))
           """
 
-          # Remove the indentation caused by the Python source block.
           lines = makefile.splitlines()
           cleaned = []
 
@@ -176,7 +198,6 @@ jobs:
               encoding="utf-8"
           )
 
-          # Copy MDK4 source into temporary OpenWrt package.
           source = package / "src"
           source.mkdir(parents=True, exist_ok=True)
 
@@ -206,17 +227,12 @@ jobs:
           print("Temporary OpenWrt package created:")
           print(package)
 
-      - name: Verify generated OpenWrt Makefile
+      - name: Verify OpenWrt Makefile
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
         run: |
           echo "===== OpenWrt Makefile ====="
           cat -n package/mdk4/Makefile
           echo "============================"
-
-          echo
-          echo "===== TAB characters ====="
-          grep -n $'\t' package/mdk4/Makefile || true
-          echo "=========================="
 
       - name: Configure OpenWrt SDK
         working-directory: ${{ runner.temp }}/${{ env.SDK }}
